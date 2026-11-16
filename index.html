@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>올팍 지금 갈까? — 올림픽공원 실시간 주차</title>
+<meta name="description" content="올림픽공원 실시간 주차대수와 평소 대비 혼잡도를 한 화면에. 한국체육산업개발 공공데이터 활용.">
+<style>
+  :root { --bg:#f6f8f7; --card:#fff; --ink:#15211b; --sub:#5d6b64; --line:#e3e8e5;
+          --green:#1f9d60; --amber:#d98a00; --red:#d64545; --grey:#8a958f; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font-family: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif; }
+  main { max-width: 480px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 22px; margin: 4px 0 2px; }
+  .lead { color: var(--sub); margin: 0 0 16px; font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px; margin-bottom: 14px; }
+  .now { display:flex; align-items:flex-end; gap:8px; }
+  .num { font-size: 56px; font-weight: 800; letter-spacing: -1px; line-height: 1; }
+  .unit { font-size: 20px; font-weight: 700; padding-bottom: 6px; }
+  .meta { color: var(--sub); font-size: 13px; margin-top: 8px; }
+  .badge { display:inline-block; padding: 6px 12px; border-radius: 999px; font-weight: 700; font-size: 15px; color:#fff; margin-top: 12px; }
+  .tip { margin-top: 10px; font-size: 14px; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  svg { width: 100%; height: auto; display:block; }
+  .legend { display:flex; gap:14px; font-size:12px; color:var(--sub); margin-top:6px; }
+  .legend i { display:inline-block; width:16px; height:3px; vertical-align:middle; margin-right:4px; }
+  .foot { font-size: 12px; color: var(--sub); line-height: 1.6; }
+  .foot a { color: var(--sub); }
+  .err { color: var(--red); }
+</style>
+</head>
+<body>
+<main>
+  <h1>올팍 지금 갈까?</h1>
+  <p class="lead">올림픽공원 주차장 실시간 현황과 평소 대비 혼잡도</p>
+
+  <section class="card" id="nowCard">
+    <div class="now"><span class="num" id="num">—</span><span class="unit">대 주차 중</span></div>
+    <div class="meta" id="updated">불러오는 중…</div>
+    <div id="level"></div>
+  </section>
+
+  <section class="card">
+    <h2>오늘 시간대별 주차대수</h2>
+    <svg id="chart" viewBox="0 0 360 190" role="img" aria-label="오늘 시간대별 주차대수 그래프"></svg>
+    <div class="legend"><span><i style="background:var(--green)"></i>오늘</span><span id="lgAvg"><i style="background:var(--grey)"></i>같은 요일유형 평균</span></div>
+  </section>
+
+  <section class="card foot">
+    <div><b>데이터</b> 한국체육산업개발주식회사_실시간 주차현황 (공공데이터포털 15168686)을 10분마다 기록합니다.</div>
+    <div id="since"></div>
+    <div>주차대수는 동2문·남2문·북2문 주차구역 합계이며, 장기 주차 차량은 출차가 기록되지 않아 실제보다 많게 잡힐 수 있습니다(기관 설명).</div>
+    <div><a href="data/parking_log.csv">수집 원본 CSV</a> · <a href="https://github.com/SoohoP/olpark-now">소스 코드</a></div>
+  </section>
+</main>
+
+<script>
+const KST_FMT = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+const nowKST = () => KST_FMT.format(new Date()).replace('T', ' ');   // "YYYY-MM-DD HH:MM"
+const dayType = d => { const w = new Date(d + 'T00:00:00Z').getUTCDay(); return (w === 0 || w === 6) ? '주말' : '평일'; };
+const fmt = n => n.toLocaleString('ko-KR');
+
+function parse(text) {
+  return text.trim().split(/\r?\n/).slice(1).map(l => {
+    const [ts, v, st] = l.split(',');
+    return { ts, date: ts.slice(0, 10), hour: +ts.slice(11, 13), min: +ts.slice(14, 16), v: v === '' ? null : +v, st };
+  }).filter(r => r.v !== null && /^(ok|manual)$/.test(r.st));
+}
+
+function minutesAgo(ts) {
+  const [a, b] = [nowKST(), ts].map(s => Date.parse(s.replace(' ', 'T') + ':00Z'));
+  return Math.round((a - b) / 60000);
+}
+
+function level(rows, latest) {
+  const past = rows.filter(r => r.date !== latest.date && r.hour === latest.hour && dayType(r.date) === dayType(latest.date));
+  const days = new Set(rows.filter(r => r.date !== latest.date).map(r => r.date)).size;
+  if (new Set(past.map(r => r.date)).size < 3) {
+    return { label: '기준 데이터 수집 중', color: 'var(--grey)', tip: `평소 수준을 계산하려면 같은 요일유형·같은 시간대 기록이 3일 이상 필요해요. (지금까지 ${days}일치)` };
+  }
+  const below = past.filter(r => r.v <= latest.v).length / past.length;
+  if (below < 0.4) return { label: '여유', color: 'var(--green)', tip: '평소 이 시간보다 한산해요. 차로 와도 괜찮아요.' };
+  if (below < 0.75) return { label: '보통', color: 'var(--amber)', tip: '평소 이 시간 수준이에요.' };
+  return { label: '혼잡', color: 'var(--red)', tip: '평소 이 시간보다 붐벼요. 대중교통(5·8·9호선)을 권해요.' };
+}
+
+function chart(rows, today) {
+  const svg = document.getElementById('chart');
+  const W = 360, H = 190, L = 40, R = 8, T = 10, B = 26;
+  const todays = rows.filter(r => r.date === today);
+  const dt = dayType(today);
+  const others = rows.filter(r => r.date !== today && dayType(r.date) === dt);
+  const avg = [];
+  for (let h = 0; h < 24; h++) {
+    const vs = others.filter(r => r.hour === h).map(r => r.v);
+    if (vs.length) avg.push([h + 0.5, vs.reduce((a, b) => a + b, 0) / vs.length]);
+  }
+  const maxV = Math.max(100, ...todays.map(r => r.v), ...avg.map(p => p[1])) * 1.1;
+  const x = h => L + (W - L - R) * h / 24, y = v => T + (H - T - B) * (1 - v / maxV);
+  let g = '';
+  for (let i = 0; i <= 4; i++) {
+    const v = Math.round(maxV * i / 4);
+    g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#e3e8e5"/><text x="${L - 6}" y="${y(v) + 4}" font-size="10" text-anchor="end" fill="#5d6b64">${fmt(v)}</text>`;
+  }
+  for (const h of [0, 6, 12, 18, 24]) g += `<text x="${x(h)}" y="${H - 8}" font-size="10" text-anchor="${h === 24 ? 'end' : 'middle'}" fill="#5d6b64">${h}시</text>`;
+  const path = pts => pts.map((p, i) => `${i ? 'L' : 'M'}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join('');
+  if (avg.length > 1) g += `<path d="${path(avg)}" fill="none" stroke="#8a958f" stroke-width="2" stroke-dasharray="4 4"/>`;
+  document.getElementById('lgAvg').style.display = avg.length > 1 ? '' : 'none';
+  const tp = todays.map(r => [r.hour + r.min / 60, r.v]);
+  if (tp.length > 1) g += `<path d="${path(tp)}" fill="none" stroke="#1f9d60" stroke-width="2.5"/>`;
+  if (tp.length) { const p = tp[tp.length - 1]; g += `<circle cx="${x(p[0])}" cy="${y(p[1])}" r="4" fill="#1f9d60"/>`; }
+  svg.innerHTML = g;
+}
+
+fetch('data/parking_log.csv', { cache: 'no-store' })
+  .then(r => r.text())
+  .then(text => {
+    const rows = parse(text);
+    if (!rows.length) throw new Error('no data');
+    const latest = rows[rows.length - 1];
+    document.getElementById('num').textContent = fmt(latest.v);
+    const ago = minutesAgo(latest.ts);
+    document.getElementById('updated').textContent = `${latest.ts.slice(5).replace('-', '/')} 기준 (${ago <= 1 ? '방금' : ago + '분 전'})`;
+    const lv = level(rows, latest);
+    document.getElementById('level').innerHTML = `<span class="badge" style="background:${lv.color}">${lv.label}</span><div class="tip">${lv.tip}</div>`;
+    chart(rows, nowKST().slice(0, 10));
+    document.getElementById('since').textContent = `기록 시작 ${rows[0].ts.slice(0, 10)} · 누적 ${fmt(rows.length)}건`;
+  })
+  .catch(e => { document.getElementById('updated').innerHTML = `<span class="err">데이터를 불러오지 못했어요. (${e.message})</span>`; });
+</script>
+</body>
+</html>
