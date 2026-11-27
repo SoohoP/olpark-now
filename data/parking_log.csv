@@ -1123,3 +1123,4 @@ timestamp_kst,parking_sum,status
 2026-11-27 16:50,2360,ok
 2026-11-27 17:00,,error:TimeoutError
 2026-11-27 17:10,2412,ok
+2026-11-27 17:20,2445,ok
