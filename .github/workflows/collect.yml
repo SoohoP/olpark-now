@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  actions: write   # 끝날 때 다음 실행을 이어 붙이기 위해
 
 # 동시에 하나만 실행. 실행 중이면 다음 예약은 대기했다가 이어서 시작한다.
 concurrency:
@@ -46,3 +47,11 @@ jobs:
             NOW=$(date +%s)
             sleep $(( 600 - NOW % 600 + 20 ))
           done
+
+      - name: Chain next run
+        # 예약 실행이 늦게 시작해 생기는 공백을 줄이려고, 끝나기 직전에 다음 실행을 바로 예약한다.
+        # (동시 실행 제한 때문에 지금 실행이 끝난 뒤 시작된다)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run collect.yml --ref main || true
